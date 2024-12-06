@@ -75,5 +75,6 @@ private:
 
     bool HandleUser(CLIENT_CONTEXT& ClientContext, const std::string& Message);
     bool HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Message);
+    bool HandlePass(CLIENT_CONTEXT& ClientContext, const std::string& Message);
 };
 

@@ -173,6 +173,10 @@ void FtpServer::ProcessCommand(const std::string& Command, CLIENT_CONTEXT& Clien
     {
         this->HandleUser(ClientContext, argument);
     }
+    else if (!command.compare("PASS"))
+    {
+        this->HandlePass(ClientContext, argument);
+    }
     else if (!command.compare("OPTS"))
     {
         this->HandleOpts(ClientContext, argument);
@@ -197,6 +201,23 @@ bool FtpServer::HandleUser(CLIENT_CONTEXT& ClientContext, const std::string& Arg
     strcpy_s(ClientContext.UserName, sizeof(ClientContext.UserName), Argument.c_str());
     return this->SendString(ClientContext, message);
 
+}
+
+bool FtpServer::HandlePass(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (Argument.size() == 0)
+    {
+        return this->SendString(ClientContext, "501 Pass command with syntax error.");
+    }
+    const std::string& username = ClientContext.UserName;
+    if (username.size() == 0 || username.compare(HARDCODED_USER) || Argument.compare(HARDCODED_PASSWORD))
+    {
+        return this->SendString(ClientContext, "530 Invalid username or password");
+    }
+
+    ClientContext.Access = CLIENT_ACCESS::Full;
+
+    return this->SendString(ClientContext, "230 User logged in.");
 }
 
 bool FtpServer::HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
