@@ -5,6 +5,8 @@ VisualStudioVersion = 17.10.34928.147
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ftp-server", "ftp-server\ftp-server.vcxproj", "{FAEFCF28-918B-4E42-9178-B2530D0B85B4}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ftp-client", "ftp-client\ftp-client.vcxproj", "{7D996E17-040A-4CCB-AD09-46DD40E5A777}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|ARM64 = Debug|ARM64
@@ -27,6 +29,18 @@ Global
 		{FAEFCF28-918B-4E42-9178-B2530D0B85B4}.Release|x64.Build.0 = Release|x64
 		{FAEFCF28-918B-4E42-9178-B2530D0B85B4}.Release|x86.ActiveCfg = Release|Win32
 		{FAEFCF28-918B-4E42-9178-B2530D0B85B4}.Release|x86.Build.0 = Release|Win32
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|ARM64.ActiveCfg = Debug|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|ARM64.Build.0 = Debug|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|x64.ActiveCfg = Debug|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|x64.Build.0 = Debug|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|x86.ActiveCfg = Debug|Win32
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Debug|x86.Build.0 = Debug|Win32
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|ARM64.ActiveCfg = Release|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|ARM64.Build.0 = Release|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|x64.ActiveCfg = Release|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|x64.Build.0 = Release|x64
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|x86.ActiveCfg = Release|Win32
+		{7D996E17-040A-4CCB-AD09-46DD40E5A777}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
