@@ -15,6 +15,7 @@
 #define QUIT_COMMAND "QUIT"
 #define PASV_RESPONSE "227"
 #define GET_COMMAND "GET"
+#define EXIT "EXIT"
 #define HELP "HELP"
 
 FtpClient::FtpClient() : controlSocket(INVALID_SOCKET), isConnected(false) {}
@@ -321,7 +322,7 @@ void FtpClient::Start(std::istream& in, std::ostream& out)
         {
 			Disconnect();
 		}
-        else if (action == QUIT_COMMAND)
+        else if (action == QUIT_COMMAND || action == EXIT)
         {
             Disconnect(false);
             break;
