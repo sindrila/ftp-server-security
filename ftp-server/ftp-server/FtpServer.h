@@ -3,6 +3,7 @@
 #include <WS2tcpip.h>
 #include <iostream>
 #include <string>
+#include <sstream>
 #include "BS_thread_pool_light.hpp"
 
 #define DEFAULT_BUFLEN  512
@@ -73,8 +74,12 @@ private:
 
     void ProcessCommand(const std::string& Command, CLIENT_CONTEXT& ClientContext);
 
-    bool HandleUser(CLIENT_CONTEXT& ClientContext, const std::string& Message);
-    bool HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Message);
-    bool HandlePass(CLIENT_CONTEXT& ClientContext, const std::string& Message);
+    bool HandleUser(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandlePass(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandlePasv(CLIENT_CONTEXT& ClientContext);
+    bool HandleQuit(CLIENT_CONTEXT& ClientContext);
+    bool HandleList(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandlePort(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
 };
 

@@ -181,6 +181,22 @@ void FtpServer::ProcessCommand(const std::string& Command, CLIENT_CONTEXT& Clien
     {
         this->HandleOpts(ClientContext, argument);
     }
+    else if (!command.compare("PASV"))
+    {
+        this->HandlePasv(ClientContext);
+    }
+    else if (!command.compare("QUIT"))
+    {
+        this->HandleQuit(ClientContext);
+    }
+    else if (!command.compare("LIST"))
+    {
+        this->HandleList(ClientContext, argument);
+    }
+    else if (!command.compare("PORT"))
+    {
+        this->HandlePort(ClientContext, argument);
+    }
     else
     {
         std::cout << "Unsupported command: " << command << std::endl;
@@ -231,3 +247,192 @@ bool FtpServer::HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Arg
         return this->SendString(ClientContext, "501 Opts command with syntax error.");
     }
 }
+
+bool FtpServer::HandlePasv(CLIENT_CONTEXT& ClientContext)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    SOCKET passiveSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (passiveSocket == INVALID_SOCKET)
+    {
+        closesocket(passiveSocket);
+        return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+    }
+
+    SOCKADDR_IN serverAddr = { .sin_family = AF_INET, .sin_port = htons((rand() % 5000) + 60001), .sin_addr = 0UL };
+    int status = bind(passiveSocket, reinterpret_cast<PSOCKADDR>(&serverAddr), sizeof(serverAddr));
+    if (status == SOCKET_ERROR)
+    {
+        closesocket(passiveSocket);
+        return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+    }
+
+    status = listen(passiveSocket, SOMAXCONN);
+    if (status == SOCKET_ERROR)
+    {
+        closesocket(passiveSocket);
+        return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+    }
+
+    ClientContext.DataIPv4 = ClientContext.IPv4;
+    ClientContext.DataPort = serverAddr.sin_port;
+    ClientContext.DataSocket = passiveSocket;
+    ClientContext.DataSocketType = DATASOCKET_TYPE::Passive;
+
+    CHAR message[MESSAGE_MAX_LENGTH] = { 0 };
+    _snprintf_s(message, sizeof(message), _TRUNCATE,
+        "227 Entering Passive Mode (%u,%u,%u,%u,%u,%u).",
+        (ClientContext.DataIPv4.s_addr) & 0xFF,
+        (ClientContext.DataIPv4.s_addr >> 8) & 0xFF,
+        (ClientContext.DataIPv4.s_addr >> 16) & 0xFF,
+        (ClientContext.DataIPv4.s_addr >> 24) & 0xFF,
+        (ClientContext.DataPort) & 0xFF,
+        (ClientContext.DataPort >> 8) & 0xFF);
+    return this->SendString(ClientContext, message);
+}
+
+bool FtpServer::HandleQuit(CLIENT_CONTEXT& ClientContext)
+{
+    return this->SendString(ClientContext, "221 Quit.");
+}
+
+std::string FiletimeToTimestamp(FILETIME& Filetime)
+{
+    SYSTEMTIME systemTime = { 0 };
+    FileTimeToSystemTime(&Filetime, &systemTime);
+    CHAR buffer[24] = { 0 };
+    _snprintf_s(buffer, 24, _TRUNCATE, "%04d-%02d-%02d %02d:%02d:%02d.%03d", systemTime.wYear, systemTime.wMonth, systemTime.wDay, systemTime.wHour, systemTime.wMinute, systemTime.wSecond, systemTime.wMilliseconds);
+    buffer[24 - 1] = ANSI_NULL;
+    return buffer;
+}
+
+bool FtpServer::HandleList(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with user and pass.");
+    }
+
+    std::string listDir = std::string(ClientContext.CurrentDir);
+    if (Argument.size() > 0 && !Argument.starts_with("-a") && !Argument.starts_with("-1"))
+    {
+        if (Argument.contains(".."))
+        {
+            return this->SendString(ClientContext, "501 Syntax error in parmeters or arguments");
+        }
+        listDir += "\\" + Argument;
+    }
+
+    WIN32_FIND_DATAA fileData = { 0 };
+    HANDLE fileHandle = FindFirstFileA((listDir + "\\*").c_str(), &fileData);
+    std::stringstream listStream;
+    do
+    {
+        if (strcmp(fileData.cFileName, ".") && strcmp(fileData.cFileName, ".."))
+        {
+            listStream << ((fileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "d" : "-")
+                << "rw-r--r-- 1 owner group "
+                << fileData.nFileSizeLow << " "
+                << FiletimeToTimestamp(fileData.ftLastWriteTime) << " "
+                << fileData.cFileName << "\r\n";
+        }
+    } while (FindNextFileA(fileHandle, &fileData));
+    FindClose(fileHandle);
+
+    this->SendString(ClientContext, "150 Opening data connection.");
+
+    SOCKET dataSocket = { 0 };
+    if (ClientContext.DataSocketType == DATASOCKET_TYPE::Passive)
+    {
+        dataSocket = accept(ClientContext.DataSocket, NULL, NULL);
+        closesocket(ClientContext.DataSocket);
+        ClientContext.DataSocket = dataSocket;
+        if (dataSocket == INVALID_SOCKET)
+        {
+            closesocket(dataSocket);
+            return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+        }
+    }
+    else if (ClientContext.DataSocketType == DATASOCKET_TYPE::Normal)
+    {
+        dataSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        SOCKADDR_IN clientAddr = { .sin_family = AF_INET, .sin_port = ClientContext.DataPort, .sin_addr = ClientContext.DataIPv4 };
+        int status = connect(dataSocket, reinterpret_cast<PSOCKADDR>(&clientAddr), sizeof(clientAddr));
+        if (status == SOCKET_ERROR)
+        {
+            closesocket(dataSocket);
+            return this->SendString(ClientContext, "550 File or directory unavailable.");
+        }
+    }
+
+    this->SendString(dataSocket, listStream.str());
+    closesocket(dataSocket);
+    return this->SendString(ClientContext, "226 Transfer complete.");
+}
+
+bool FtpServer::HandlePort(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    if (Argument.size() == 0)
+    {
+        return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+    }
+
+    int c;
+    PCHAR p = const_cast<PCHAR>(Argument.c_str());
+    ULONG dataAddr[4] = { 0UL };
+    ULONG dataPort[2] = { 0UL };
+    for (c = 0; c < 4; ++c)
+    {
+        dataAddr[c] = strtoul(p, &p, 10);
+        if (*p != ',' && *p != 0)
+        {
+            break;
+        }
+        if (*p == 0)
+        {
+            return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+        }
+        ++p;
+    }
+
+    for (c = 0; c < 2; ++c)
+    {
+        dataPort[c] = strtoul(p, &p, 10);
+        if (*p != ',' && *p != 0)
+        {
+            break;
+        }
+        if (*p == 0)
+        {
+            break;
+        }
+        ++p;
+    }
+
+    IN_ADDR dataIPv4 = { 0 };
+    dataIPv4.S_un.S_un_b.s_b1 = static_cast<BYTE>(dataAddr[0]);
+    dataIPv4.S_un.S_un_b.s_b2 = static_cast<BYTE>(dataAddr[1]);
+    dataIPv4.S_un.S_un_b.s_b3 = static_cast<BYTE>(dataAddr[2]);
+    dataIPv4.S_un.S_un_b.s_b4 = static_cast<BYTE>(dataAddr[3]);
+    if (dataIPv4.S_un.S_addr != ClientContext.IPv4.S_un.S_addr)
+    {
+        return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+    }
+
+    ClientContext.DataIPv4.S_un.S_addr = dataIPv4.S_un.S_addr;
+    ClientContext.DataPort = static_cast<USHORT>((dataPort[1] << 8) + dataPort[0]);
+    ClientContext.DataSocketType = DATASOCKET_TYPE::Normal;
+
+    return this->SendString(ClientContext, "200 Transfer complete.");
+}
+
+
+

@@ -165,8 +165,11 @@ void FtpClient::ListFiles()
         return;
     }
 
-    SendCommand(PASV_COMMAND);
-    std::cout << ReceiveResponse();
+    //SendCommand(PASV_COMMAND);
+    //std::cout << ReceiveResponse();
+    std::string serverIp = "loclahost";
+    int serverPort = 21;
+    this->EnterPassiveMode(serverIp, serverPort);
 
     SendCommand(LIST_COMMAND);
     std::cout << ReceiveResponse();
@@ -218,6 +221,7 @@ std::string FtpClient::ReceiveResponse()
 {
     char buffer[DEFAULT_BUFLEN] = { 0 };
     int bytesReceived = recv(controlSocket, buffer, DEFAULT_BUFLEN, 0);
+    std::cout << bytesReceived << ' ' << "buffer=" << buffer << std::endl;
     if (bytesReceived > 0)
     {
         return std::string(buffer, bytesReceived);
@@ -244,7 +248,7 @@ bool FtpClient::SendCommand(const std::string& command)
     int status = send(controlSocket, formattedCommand.c_str(), static_cast<int>(formattedCommand.size()), 0);
     if (status == SOCKET_ERROR)
     {
-        std::cerr << "Send failed with error: " << WSAGetLastError() << std::endl;
+        std::cerr << "Send failed with error: " << WSAGetLastError() << " " << command << std::endl;
         return false;
     }
 
