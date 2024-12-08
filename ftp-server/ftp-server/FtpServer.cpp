@@ -102,7 +102,7 @@ FtpServer::HandleConnections()
                     inet_ntop(AF_INET, &clientInfo.sin_addr, clientIP, INET_ADDRSTRLEN);
                     std::cout << "Client connected from IP: " << clientIP << std::endl;
 
-                    CLIENT_CONTEXT clientContext = { .Socket = *clientSocket, .CurrentDir = R"(D:\facultate-repo)", .IPv4 = clientInfo.sin_addr };
+                    CLIENT_CONTEXT clientContext = { .Socket = *clientSocket, .CurrentDir = R"(C:\Users\Alex)", .IPv4 = clientInfo.sin_addr };
                     this->HandleConnection(clientContext);
 
                     closesocket(*clientSocket);
@@ -196,6 +196,22 @@ void FtpServer::ProcessCommand(const std::string& Command, CLIENT_CONTEXT& Clien
     else if (!command.compare("PORT"))
     {
         this->HandlePort(ClientContext, argument);
+    }
+    else if (!command.compare("RETR"))
+    {
+        this->HandleRetr(ClientContext, argument);
+    }
+    else if (!command.compare("TYPE"))
+    {
+        this->HandleType(ClientContext, argument);
+    }
+    else if (!command.compare("STOR"))
+    {
+        this->HandleStor(ClientContext, argument);
+    }
+    else if (!command.compare("NLST"))
+    {
+        this->HandleNlst(ClientContext, argument);
     }
     else
     {
@@ -432,6 +448,213 @@ bool FtpServer::HandlePort(CLIENT_CONTEXT& ClientContext, const std::string& Arg
     ClientContext.DataSocketType = DATASOCKET_TYPE::Normal;
 
     return this->SendString(ClientContext, "200 Transfer complete.");
+}
+
+bool FtpServer::HandleRetr(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    if (Argument.size() == 0)
+    {
+        return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+    }
+
+    bool status = false;
+    bool fileFound = false;
+    WIN32_FIND_DATAA fileData = { 0 };
+    HANDLE fileHandle = FindFirstFileA((std::string(ClientContext.CurrentDir) + "\\*").c_str(), &fileData);
+    do
+    {
+        if (!strcmp(Argument.c_str(), fileData.cFileName))
+        {
+            this->SendString(ClientContext, "150 Opening data connection.");
+
+            SOCKET dataSocket = { 0 };
+            if (ClientContext.DataSocketType == DATASOCKET_TYPE::Passive)
+            {
+                dataSocket = accept(ClientContext.DataSocket, NULL, NULL);
+                closesocket(ClientContext.DataSocket);
+                ClientContext.DataSocket = dataSocket;
+                if (dataSocket == INVALID_SOCKET)
+                {
+                    closesocket(dataSocket);
+                    return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+                }
+            }
+            else if (ClientContext.DataSocketType == DATASOCKET_TYPE::Normal)
+            {
+                dataSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                SOCKADDR_IN clientAddr = { .sin_family = AF_INET, .sin_port = ClientContext.DataPort, .sin_addr = ClientContext.DataIPv4 };
+                int socketStatus = connect(dataSocket, reinterpret_cast<PSOCKADDR>(&clientAddr), sizeof(clientAddr));
+                if (socketStatus == SOCKET_ERROR)
+                {
+                    closesocket(dataSocket);
+                    return this->SendString(ClientContext, "550 File or directory unavailable.");
+                }
+            }
+
+            std::ifstream file(std::string(ClientContext.CurrentDir) + "\\" + fileData.cFileName, std::ios::binary);
+            if (!file.is_open())
+            {
+                closesocket(dataSocket);
+                return this->SendString(ClientContext, "550 File not found or access denied.");
+            }
+
+            CHAR buffer[DEFAULT_BUFLEN] = { 0 };
+            while (file.read(buffer, sizeof(buffer)) || file.gcount())
+            {
+                if (send(dataSocket, buffer, static_cast<int>(file.gcount()), 0) == SOCKET_ERROR)
+                {
+                    file.close();
+                    closesocket(dataSocket);
+                    return this->SendString(ClientContext, "426 Connection closed; transfer aborted.");
+                }
+            }
+
+            file.close();
+            closesocket(dataSocket);
+            status = this->SendString(ClientContext, "226 Transfer complete.");
+            fileFound = true;
+
+            break;
+        }
+    } while (FindNextFileA(fileHandle, &fileData));
+    FindClose(fileHandle);
+
+    if (!fileFound)
+    {
+        status = this->SendString(ClientContext, "550 File or directory unavailable.");
+    }
+
+    return status;
+}
+
+bool FtpServer::HandleType(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    if (Argument.size() == 0)
+    {
+        return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+    }
+
+    switch (Argument.c_str()[0])
+    {
+    case 'A':
+    case 'a':
+        return this->SendString(ClientContext, "200 Type set to A.");
+
+    case 'I':
+    case 'i':
+        return this->SendString(ClientContext, "200 Type set to I.");
+
+    default:
+        return this->SendString(ClientContext, "501 Syntax error in parameters or argument.");
+    }
+}
+
+bool FtpServer::HandleStor(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn)
+    {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    if (ClientContext.Access == CLIENT_ACCESS::ReadOnly)
+    {
+        return this->SendString(ClientContext, "550 Permission denied.");
+    }
+
+    if (Argument.size() == 0)
+    {
+        return this->SendString(ClientContext, "501 Syntax error in parameters or arguments.");
+    }
+
+    std::ofstream file(std::string(ClientContext.CurrentDir) + "\\" + Argument, std::ios::binary);
+    if (!file.is_open())
+    {
+        return this->SendString(ClientContext, "550 Cannot open file for writing.");
+    }
+
+    this->SendString(ClientContext, "150 Opening data connection.");
+
+    SOCKET dataSocket = { 0 };
+    if (ClientContext.DataSocketType == DATASOCKET_TYPE::Passive)
+    {
+        dataSocket = accept(ClientContext.DataSocket, NULL, NULL);
+        closesocket(ClientContext.DataSocket);
+        ClientContext.DataSocket = dataSocket;
+        if (dataSocket == INVALID_SOCKET)
+        {
+            file.close();
+            closesocket(dataSocket);
+            return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
+        }
+    }
+    else if (ClientContext.DataSocketType == DATASOCKET_TYPE::Normal)
+    {
+        dataSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        SOCKADDR_IN clientAddr = { .sin_family = AF_INET, .sin_port = ClientContext.DataPort, .sin_addr = ClientContext.DataIPv4 };
+        int status = connect(dataSocket, reinterpret_cast<PSOCKADDR>(&clientAddr), sizeof(clientAddr));
+        if (status == SOCKET_ERROR)
+        {
+            file.close();
+            closesocket(dataSocket);
+            return this->SendString(ClientContext, "550 File or directory unavailable.");
+        }
+    }
+
+    int bytesRead;
+    CHAR buffer[DEFAULT_BUFLEN] = { 0 };
+    while ((bytesRead = recv(dataSocket, buffer, sizeof(buffer), 0)) > 0)
+    {
+        file.write(buffer, bytesRead);
+    }
+
+    file.close();
+    closesocket(dataSocket);
+
+    if (bytesRead < 0)
+    {
+        return this->SendString(ClientContext, "426 Connection closed; transfer aborted.");
+    }
+
+    return this->SendString(ClientContext, "226 Transfer complete.");
+}
+
+bool FtpServer::HandleNlst(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
+{
+    if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn) {
+        return this->SendString(ClientContext, "530 Please login with USER and PASS.");
+    }
+
+    std::string dirPath = ClientContext.CurrentDir;
+    if (!Argument.empty() && !Argument.starts_with("-")) {
+        dirPath += "\\" + Argument;
+    }
+
+    WIN32_FIND_DATAA fileData;
+    HANDLE hFind = FindFirstFileA((dirPath + "\\*").c_str(), &fileData);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return this->SendString(ClientContext, "450 Requested file action not taken. Directory unavailable.");
+    }
+
+    std::stringstream fileList;
+    do {
+        if (!(fileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            fileList << fileData.cFileName << "\r\n";
+        }
+    } while (FindNextFileA(hFind, &fileData));
+    FindClose(hFind);
+
+    return this->SendString(ClientContext.DataSocket, fileList.str()) &&
+        this->SendString(ClientContext, "226 Transfer complete.");
 }
 
 

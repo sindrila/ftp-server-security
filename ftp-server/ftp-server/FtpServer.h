@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <fstream>
 #include "BS_thread_pool_light.hpp"
 
 #define DEFAULT_BUFLEN  512
@@ -81,5 +82,9 @@ private:
     bool HandleQuit(CLIENT_CONTEXT& ClientContext);
     bool HandleList(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
     bool HandlePort(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandleRetr(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandleType(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandleStor(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
+    bool HandleNlst(CLIENT_CONTEXT& ClientContext, const std::string& Argument);
 };
 
