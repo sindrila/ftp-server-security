@@ -21,6 +21,7 @@ private:
 
     std::string ReceiveResponse();
     bool SendCommand(const std::string& command);
+    std::vector<std::string> ParseArguments(const std::string& commandLine);
 
 public:
     FtpClient(std::istream& input = std::cin, std::ostream& output = std::cout, std::ostream& error = std::cerr);
@@ -31,8 +32,9 @@ public:
     void SendUser(const std::string& username);
     void SendPassword(const std::string& password);
     void ListFiles();
-    void DownloadFile(const std::string& fileName);
-    void UploadFile(const std::string& fileName);
+    void DownloadFile(const std::string& fileName, const std::string& localFileName);
+    void UploadFile(const std::string& fileName, const std::string& remoteFileName);
     bool EnterPassiveMode();
+    void SetTransferMode(bool isBinary);
     void Disconnect(bool waitForResponse);
 };
