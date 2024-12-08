@@ -3,15 +3,15 @@
 
 int main(int argc, char* argv[])
 {
-    FtpClient ftpClient;
+	FtpClient ftpClient;
 
-    if (argc > 1) 
-    {
-        std::string serverAddress = argv[1];
-        ftpClient.Connect(serverAddress);
-    }
+	if (argc > 1)
+	{
+		std::string serverAddress = argv[1];
+		ftpClient.Connect(serverAddress);
+	}
 
-    ftpClient.Start(std::cin, std::cout);
+	ftpClient.Start();
 
-    return 0;
+	return 0;
 }
