@@ -263,6 +263,106 @@ bool FtpServer::HandleOpts(CLIENT_CONTEXT& ClientContext, const std::string& Arg
         return this->SendString(ClientContext, "501 Opts command with syntax error.");
     }
 }
+//std::string GetLocalIPv4()
+//{
+//    char buffer[INET_ADDRSTRLEN] = { 0 };
+//    PIP_ADAPTER_ADDRESSES adapterAddresses = nullptr, adapter = nullptr;
+//    ULONG outBufLen = 0;
+//
+//    // Initial call to determine required buffer size
+//    if (GetAdaptersAddresses(AF_INET, 0, nullptr, adapterAddresses, &outBufLen) == ERROR_BUFFER_OVERFLOW)
+//    {
+//        adapterAddresses = (PIP_ADAPTER_ADDRESSES)malloc(outBufLen);
+//    }
+//    else
+//    {
+//        return "0.0.0.0"; // Default on failure
+//    }
+//
+//    if (GetAdaptersAddresses(AF_INET, 0, nullptr, adapterAddresses, &outBufLen) == NO_ERROR)
+//    {
+//        for (adapter = adapterAddresses; adapter != nullptr; adapter = adapter->Next)
+//        {
+//            if (adapter->OperStatus == IfOperStatusUp && adapter->FirstUnicastAddress != nullptr)
+//            {
+//                sockaddr_in* ipv4Addr = reinterpret_cast<sockaddr_in*>(adapter->FirstUnicastAddress->Address.lpSockaddr);
+//                if (inet_ntop(AF_INET, &ipv4Addr->sin_addr, buffer, INET_ADDRSTRLEN))
+//                {
+//                    free(adapterAddresses);
+//                    return std::string(buffer);
+//                }
+//            }
+//        }
+//    }
+//
+//    free(adapterAddresses);
+//    return "0.0.0.0"; // Default on failure
+
+struct IPv4 {
+    unsigned char b1, b2, b3, b4;
+};
+
+bool getMyIP(IPv4& myIP)
+{
+    char szBuffer[1024];
+
+#ifdef WIN32
+    WSADATA wsaData;
+    WORD wVersionRequested = MAKEWORD(2, 0);
+    if (::WSAStartup(wVersionRequested, &wsaData) != 0)
+        return false;
+#endif
+
+    // Get the hostname
+    if (gethostname(szBuffer, sizeof(szBuffer)) != 0)
+    {
+#ifdef WIN32
+        WSACleanup();
+#endif
+        return false;
+    }
+
+    // Use getaddrinfo to retrieve the IP address
+    struct addrinfo hints = {};
+    struct addrinfo* result = nullptr;
+
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    if (getaddrinfo(szBuffer, nullptr, &hints, &result) != 0)
+    {
+#ifdef WIN32
+        WSACleanup();
+#endif
+        return false;
+    }
+
+    // Extract the first IPv4 address
+    for (struct addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next)
+    {
+        if (ptr->ai_family == AF_INET) // Ensure it's IPv4
+        {
+            struct sockaddr_in* sockaddr_ipv4 = (struct sockaddr_in*)ptr->ai_addr;
+            myIP.b1 = sockaddr_ipv4->sin_addr.S_un.S_un_b.s_b1;
+            myIP.b2 = sockaddr_ipv4->sin_addr.S_un.S_un_b.s_b2;
+            myIP.b3 = sockaddr_ipv4->sin_addr.S_un.S_un_b.s_b3;
+            myIP.b4 = sockaddr_ipv4->sin_addr.S_un.S_un_b.s_b4;
+
+            freeaddrinfo(result);
+#ifdef WIN32
+            WSACleanup();
+#endif
+            return true;
+        }
+    }
+
+    freeaddrinfo(result);
+#ifdef WIN32
+    WSACleanup();
+#endif
+    return false;
+}
 
 bool FtpServer::HandlePasv(CLIENT_CONTEXT& ClientContext)
 {
@@ -274,6 +374,7 @@ bool FtpServer::HandlePasv(CLIENT_CONTEXT& ClientContext)
     SOCKET passiveSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (passiveSocket == INVALID_SOCKET)
     {
+        std::cout << "Passive socket == invalid socket" << std::endl;
         closesocket(passiveSocket);
         return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
     }
@@ -282,6 +383,7 @@ bool FtpServer::HandlePasv(CLIENT_CONTEXT& ClientContext)
     int status = bind(passiveSocket, reinterpret_cast<PSOCKADDR>(&serverAddr), sizeof(serverAddr));
     if (status == SOCKET_ERROR)
     {
+        std::cout << "Binding error == sockket erorr" << std::endl;
         closesocket(passiveSocket);
         return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
     }
@@ -289,22 +391,25 @@ bool FtpServer::HandlePasv(CLIENT_CONTEXT& ClientContext)
     status = listen(passiveSocket, SOMAXCONN);
     if (status == SOCKET_ERROR)
     {
+        std::cout << "Listen status == socket errorr" << std::endl;
         closesocket(passiveSocket);
         return this->SendString(ClientContext, "451 Requested action aborted. Local error in processing.");
     }
 
-    ClientContext.DataIPv4 = ClientContext.IPv4;
+    IPv4 ipv4 = { 0 };
+    getMyIP(ipv4);
+    ClientContext.DataIPv4 = serverAddr.sin_addr;
     ClientContext.DataPort = serverAddr.sin_port;
     ClientContext.DataSocket = passiveSocket;
     ClientContext.DataSocketType = DATASOCKET_TYPE::Passive;
 
     CHAR message[MESSAGE_MAX_LENGTH] = { 0 };
-    _snprintf_s(message, sizeof(message), _TRUNCATE,
+        _snprintf_s(message, sizeof(message), _TRUNCATE,
         "227 Entering Passive Mode (%u,%u,%u,%u,%u,%u).",
-        (ClientContext.DataIPv4.s_addr) & 0xFF,
-        (ClientContext.DataIPv4.s_addr >> 8) & 0xFF,
-        (ClientContext.DataIPv4.s_addr >> 16) & 0xFF,
-        (ClientContext.DataIPv4.s_addr >> 24) & 0xFF,
+        ipv4.b1 & 0xFF,
+        ipv4.b2 & 0xFF,
+        ipv4.b3 & 0xFF,
+        ipv4.b4 & 0xFF,
         (ClientContext.DataPort) & 0xFF,
         (ClientContext.DataPort >> 8) & 0xFF);
     return this->SendString(ClientContext, message);
@@ -630,6 +735,9 @@ bool FtpServer::HandleStor(CLIENT_CONTEXT& ClientContext, const std::string& Arg
 
 bool FtpServer::HandleNlst(CLIENT_CONTEXT& ClientContext, const std::string& Argument)
 {
+    return this->HandleList(ClientContext, Argument);
+
+    /*
     if (ClientContext.Access == CLIENT_ACCESS::NotLoggedIn) {
         return this->SendString(ClientContext, "530 Please login with USER and PASS.");
     }
@@ -654,7 +762,7 @@ bool FtpServer::HandleNlst(CLIENT_CONTEXT& ClientContext, const std::string& Arg
     FindClose(hFind);
 
     return this->SendString(ClientContext.DataSocket, fileList.str()) &&
-        this->SendString(ClientContext, "226 Transfer complete.");
+        this->SendString(ClientContext, "226 Transfer complete."); */
 }
 
 
