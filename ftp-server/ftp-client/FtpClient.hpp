@@ -18,10 +18,12 @@ private:
     SOCKET controlSocket;
     SOCKET dataSocket;
     bool isConnected;
+    bool isBinaryTransfer;
 
-    std::string ReceiveResponse();
+    std::string ReceiveResponse(SOCKET socket);
     bool SendCommand(const std::string& command);
     std::vector<std::string> ParseArguments(const std::string& commandLine);
+    void CleanupDataSocket();
 
 public:
     FtpClient(std::istream& input = std::cin, std::ostream& output = std::cout, std::ostream& error = std::cerr);

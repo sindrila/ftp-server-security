@@ -24,7 +24,7 @@
 #define HELP "HELP"
 
 FtpClient::FtpClient(std::istream& in, std::ostream& out, std::ostream& err)
-	: controlSocket(INVALID_SOCKET), dataSocket(INVALID_SOCKET), isConnected(false), input(in), output(out), error(err) {}
+	: controlSocket(INVALID_SOCKET), dataSocket(INVALID_SOCKET), isConnected(false), isBinaryTransfer(false), input(in), output(out), error(err) {}
 
 FtpClient::~FtpClient()
 {
@@ -85,7 +85,7 @@ bool FtpClient::Connect(const std::string& serverIP, const std::string& port)
 		return false;
 	}
 
-	output << ReceiveResponse();
+	output << ReceiveResponse(controlSocket);
 	this->isConnected = true;
 	this->serverIP = serverIP;
 	this->serverPort = port;
@@ -101,7 +101,7 @@ void FtpClient::SendUser(const std::string& username)
 	}
 
 	SendCommand("USER " + username);
-	output << ReceiveResponse();
+	output << ReceiveResponse(controlSocket);
 }
 
 void FtpClient::SendPassword(const std::string& password)
@@ -113,7 +113,7 @@ void FtpClient::SendPassword(const std::string& password)
 	}
 
 	SendCommand("PASS " + password);
-	output << ReceiveResponse();
+	output << ReceiveResponse(controlSocket);
 }
 
 bool FtpClient::EnterPassiveMode()
@@ -124,8 +124,7 @@ bool FtpClient::EnterPassiveMode()
 		return false;
 	}
 
-	std::string response = ReceiveResponse();
-	output << "debug response: " << response;
+	std::string response = ReceiveResponse(controlSocket);
 	output << "Server Response: " << response;
 
 	if (response.find(PASV_RESPONSE) == std::string::npos)
@@ -203,7 +202,7 @@ void FtpClient::SetTransferMode(bool isBinary)
 	}
 
 	output << "Transfer mode set to " << (isBinary ? "binary" : "ASCII") << ".\n";
-	output << ReceiveResponse();
+	output << ReceiveResponse(controlSocket);
 }
 
 void FtpClient::ListFiles()
@@ -220,29 +219,36 @@ void FtpClient::ListFiles()
 		return;
 	}
 
-	if (!SendCommand(LIST_COMMAND))
+	SendCommand(LIST_COMMAND);
+	std::string response = ReceiveResponse(controlSocket);
+	if (response[0] != '1')
 	{
-		error << "Failed to send LIST command.\n";
+		error << "LIST command failed. Server response: " << response << std::endl;
 		return;
 	}
 
-	output << "Control Response: " << ReceiveResponse();
-
-	char buffer[DEFAULT_BUFLEN] = { 0 };
-	int bytesReceived = recv(dataSocket, buffer, DEFAULT_BUFLEN - 1, 0);
-	while (bytesReceived > 0)
+	char buffer[DEFAULT_BUFLEN];
+	int bytesRead;
+	while ((bytesRead = recv(dataSocket, buffer, sizeof(buffer), 0)) > 0)
 	{
-		output << std::string(buffer, bytesReceived);
-		bytesReceived = recv(dataSocket, buffer, DEFAULT_BUFLEN - 1, 0);
+		output.write(buffer, bytesRead);
 	}
 
-	if (bytesReceived == SOCKET_ERROR)
+	if (bytesRead == SOCKET_ERROR)
 	{
-		error << "Error receiving data on the data socket: " << WSAGetLastError() << std::endl;
+		error << "Error reading data socket: " << WSAGetLastError() << std::endl;
 	}
 
 	closesocket(dataSocket);
-	this->dataSocket = INVALID_SOCKET;
+	dataSocket = INVALID_SOCKET;
+
+	response = ReceiveResponse(controlSocket);
+	if (response[0] != '2')
+	{
+		error << "Error completing LIST command. Server response: " << response << std::endl;
+	}
+
+	output << "List command completed.\n";
 }
 
 
@@ -262,9 +268,15 @@ void FtpClient::DownloadFile(const std::string& fileName, const std::string& loc
 
 	std::string command = std::string(RETR_COMMAND) + " " + fileName;
 	SendCommand(command);
-	output << ReceiveResponse();
+	std::string response = ReceiveResponse(controlSocket);
 
-	std::ofstream outFile(localFileName, std::ios::binary);
+	if (response.substr(0, 3) != "150" && response.substr(0, 3) != "125")
+	{
+		error << "Error initiating file download. Server response: " << response << std::endl;
+		return;
+	}
+
+	std::ofstream outFile(localFileName, std::ios::binary | std::ios::trunc);
 	if (!outFile.is_open())
 	{
 		error << "Failed to open local file for writing: " << localFileName << std::endl;
@@ -272,24 +284,31 @@ void FtpClient::DownloadFile(const std::string& fileName, const std::string& loc
 	}
 
 	char buffer[DEFAULT_BUFLEN];
-	int bytesReceived = recv(dataSocket, buffer, DEFAULT_BUFLEN, 0);
-	while (bytesReceived > 0)
+	int bytesRead;
+	while ((bytesRead = recv(dataSocket, buffer, sizeof(buffer), 0)) > 0)
 	{
-		outFile.write(buffer, bytesReceived);
-		bytesReceived = recv(dataSocket, buffer, DEFAULT_BUFLEN, 0);
+		outFile.write(buffer, bytesRead);
 	}
 
-	if (bytesReceived < 0)
+	if (bytesRead == SOCKET_ERROR)
 	{
-		error << "Error while receiving file: " << WSAGetLastError() << std::endl;
+		error << "Error reading data socket: " << WSAGetLastError() << std::endl;
 	}
 
 	outFile.close();
 	closesocket(dataSocket);
 	dataSocket = INVALID_SOCKET;
-	output << "Download completed.\n";
-}
 
+	response = ReceiveResponse(controlSocket);
+	if (response.substr(0, 3) != "226")
+	{
+		error << "Error completing file download. Server response: " << response << std::endl;
+	}
+	else
+	{
+		output << "Download completed successfully.\n";
+	}
+}
 
 void FtpClient::UploadFile(const std::string& fileName, const std::string& remoteFileName)
 {
@@ -299,23 +318,31 @@ void FtpClient::UploadFile(const std::string& fileName, const std::string& remot
 		return;
 	}
 
-	if (!EnterPassiveMode())
-	{
-		error << "Failed to enter passive mode.\n";
-		return;
-	}
-
-	std::ifstream inFile(fileName, std::ios::binary);
+	std::ifstream inFile(fileName, this->isBinaryTransfer ? std::ios::binary : std::ios::in);
 	if (!inFile.is_open())
 	{
 		error << "Failed to open local file for reading: " << fileName << std::endl;
 		return;
 	}
 
+	if (!EnterPassiveMode())
+	{
+		error << "Failed to enter passive mode.\n";
+		return;
+	}
+
 	std::string command = std::string(STOR_COMMAND) + " " + remoteFileName;
 	SendCommand(command);
-	output << ReceiveResponse();
+	std::string response = ReceiveResponse(controlSocket);
 
+	if (response.substr(0, 3) != "150" && response.substr(0, 3) != "125")
+	{
+		error << "Error initiating file upload. Server response: " << response << std::endl;
+		inFile.close();
+		return;
+	}
+
+	// Send file data through the data socket
 	char buffer[DEFAULT_BUFLEN];
 	while (inFile.read(buffer, sizeof(buffer)))
 	{
@@ -323,16 +350,27 @@ void FtpClient::UploadFile(const std::string& fileName, const std::string& remot
 		if (bytesSent == SOCKET_ERROR)
 		{
 			error << "Error sending file data: " << WSAGetLastError() << std::endl;
-			break;
+			inFile.close();
+			closesocket(dataSocket);
+			dataSocket = INVALID_SOCKET;
+			return;
 		}
 	}
 
 	inFile.close();
 	closesocket(dataSocket);
 	dataSocket = INVALID_SOCKET;
-	output << "Upload completed.\n";
-}
 
+	response = ReceiveResponse(controlSocket);
+	if (response.substr(0, 3) != "226")
+	{
+		error << "Error completing file upload. Server response: " << response << std::endl;
+	}
+	else
+	{
+		output << "Upload completed successfully.\n";
+	}
+}
 
 void FtpClient::Disconnect(bool waitForResponse = true)
 {
@@ -350,7 +388,7 @@ void FtpClient::Disconnect(bool waitForResponse = true)
 
 	if (waitForResponse)
 	{
-		output << ReceiveResponse();
+		output << ReceiveResponse(controlSocket);
 	}
 
 	closesocket(controlSocket);
@@ -362,14 +400,14 @@ void FtpClient::Disconnect(bool waitForResponse = true)
 	output << "Disconnected from the server.\n";
 }
 
-std::string FtpClient::ReceiveResponse()
+std::string FtpClient::ReceiveResponse(SOCKET socket)
 {
 	std::string response;
 	char buffer[DEFAULT_BUFLEN] = { 0 };
 	int bytesReceived = 0;
 
 	do {
-		bytesReceived = recv(controlSocket, buffer, DEFAULT_BUFLEN - 1, 0);
+		bytesReceived = recv(socket, buffer, DEFAULT_BUFLEN - 1, 0);
 		if (bytesReceived > 0) {
 			response.append(buffer, bytesReceived);
 		}
@@ -402,7 +440,7 @@ bool FtpClient::SendCommand(const std::string& command)
 
 void FtpClient::Start()
 {
-	std::string command, argument;
+	std::string command;
 
 	output << "FTP Client started. Type 'help' for available commands.\n";
 	while (true)
@@ -411,44 +449,47 @@ void FtpClient::Start()
 		std::getline(input, command);
 
 		std::istringstream iss(command);
-		std::string action;
+		std::string action, arg1, arg2;
 		iss >> action;
 		action = Utils::toUpperCase(action);
 
+		// Extract the rest of the arguments as arg1 and arg2
+		if (iss >> std::quoted(arg1)) // Reads first argument if quoted or single word
+		{
+			iss >> std::quoted(arg2); // Attempts to read the second argument
+		}
+
 		if (action == CONNECT_COMMAND)
 		{
-			iss >> argument;
-			if (argument.empty())
+			if (arg1.empty())
 			{
 				output << "Usage: connect <serverIP>\n";
 			}
 			else
 			{
-				Connect(argument);
+				Connect(arg1);
 			}
 		}
 		else if (action == USER_COMMAND)
 		{
-			iss >> argument;
-			if (argument.empty())
+			if (arg1.empty())
 			{
 				output << "Usage: user <username>\n";
 			}
 			else
 			{
-				SendUser(argument);
+				SendUser(arg1);
 			}
 		}
 		else if (action == PASS_COMMAND)
 		{
-			iss >> argument;
-			if (argument.empty())
+			if (arg1.empty())
 			{
 				output << "Usage: pass <password>\n";
 			}
 			else
 			{
-				SendPassword(argument);
+				SendPassword(arg1);
 			}
 		}
 		else if (action == LIST_COMMAND)
@@ -457,26 +498,24 @@ void FtpClient::Start()
 		}
 		else if (action == GET_COMMAND)
 		{
-			iss >> argument;
-			if (argument.empty())
+			if (arg1.empty() || arg2.empty())
 			{
-				output << "Usage: get <fileName>\n";
+				output << "Usage: get <remoteFileName> <localFileName>\n";
 			}
 			else
 			{
-				DownloadFile(argument, "test");
+				DownloadFile(arg1, arg2);
 			}
 		}
 		else if (action == STOR_COMMAND)
 		{
-			iss >> argument;
-			if (argument.empty())
+			if (arg1.empty() || arg2.empty())
 			{
-				output << "Usage: stor <fileName>\n";
+				output << "Usage: stor <localFileName> <remoteFileName>\n";
 			}
 			else
 			{
-				UploadFile(argument, "test");
+				UploadFile(arg1, arg2);
 			}
 		}
 		else if (action == TRANSFER_MODE_BINARY)
@@ -503,7 +542,8 @@ void FtpClient::Start()
 				<< "  user <username>    - Send username\n"
 				<< "  pass <password>    - Send password\n"
 				<< "  list               - List files in directory\n"
-				<< "  get <fileName>     - Download a file\n"
+				<< "  get <remoteFileName> <localFileName> - Download a file\n"
+				<< "  stor <localFileName> <remoteFileName> - Upload a file\n"
 				<< "  binary             - Switch file transfer mode to binary\n"
 				<< "  ascii              - Switch file transfer mode to ASCII\n"
 				<< "  disconnect         - Disconnects from the FTP server\n"
@@ -516,16 +556,16 @@ void FtpClient::Start()
 	}
 }
 
-std::vector<std::string> FtpClient::ParseArguments(const std::string& commandLine)
+std::vector<std::string> ParseCommand(const std::string& input)
 {
-	std::vector<std::string> args;
-	std::istringstream stream(commandLine);
+	std::vector<std::string> tokens;
+	std::istringstream stream(input);
 	std::string token;
 
 	while (stream >> std::quoted(token))
 	{
-		args.push_back(token);
+		tokens.push_back(token);
 	}
 
-	return args;
+	return tokens;
 }
