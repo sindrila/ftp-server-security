@@ -20,6 +20,7 @@
 #define QUIT_COMMAND "QUIT"
 #define PASV_RESPONSE "227"
 #define GET_COMMAND "GET"
+#define PUT_COMMAND "PUT"
 #define EXIT "EXIT"
 #define HELP "HELP"
 
@@ -177,8 +178,7 @@ bool FtpClient::EnterPassiveMode()
 	if (connect(dataSocket, reinterpret_cast<sockaddr*>(&dataAddr), sizeof(dataAddr)) == SOCKET_ERROR)
 	{
 		error << "Data socket connection failed with error: " << WSAGetLastError() << std::endl;
-		closesocket(dataSocket);
-		this->dataSocket = INVALID_SOCKET;
+		CleanupSocket(dataSocket);
 		return false;
 	}
 
@@ -239,8 +239,7 @@ void FtpClient::ListFiles()
 		error << "Error reading data socket: " << WSAGetLastError() << std::endl;
 	}
 
-	closesocket(dataSocket);
-	dataSocket = INVALID_SOCKET;
+	CleanupSocket(dataSocket);
 
 	response = ReceiveResponse(controlSocket);
 	if (response[0] != '2')
@@ -296,8 +295,7 @@ void FtpClient::DownloadFile(const std::string& fileName, const std::string& loc
 	}
 
 	outFile.close();
-	closesocket(dataSocket);
-	dataSocket = INVALID_SOCKET;
+	CleanupSocket(dataSocket);
 
 	response = ReceiveResponse(controlSocket);
 	if (response.substr(0, 3) != "226")
@@ -342,9 +340,8 @@ void FtpClient::UploadFile(const std::string& fileName, const std::string& remot
 		return;
 	}
 
-	// Send file data through the data socket
 	char buffer[DEFAULT_BUFLEN];
-	while (inFile.read(buffer, sizeof(buffer)))
+	while (inFile.read(buffer, sizeof(buffer)).gcount() > 0)
 	{
 		int bytesSent = send(dataSocket, buffer, static_cast<int>(inFile.gcount()), 0);
 		if (bytesSent == SOCKET_ERROR)
@@ -358,8 +355,7 @@ void FtpClient::UploadFile(const std::string& fileName, const std::string& remot
 	}
 
 	inFile.close();
-	closesocket(dataSocket);
-	dataSocket = INVALID_SOCKET;
+	CleanupSocket(dataSocket);
 
 	response = ReceiveResponse(controlSocket);
 	if (response.substr(0, 3) != "226")
@@ -391,10 +387,8 @@ void FtpClient::Disconnect(bool waitForResponse = true)
 		output << ReceiveResponse(controlSocket);
 	}
 
-	closesocket(controlSocket);
-	this->controlSocket = INVALID_SOCKET;
-	closesocket(dataSocket);
-	this->dataSocket = INVALID_SOCKET;
+	CleanupSocket(dataSocket);
+	CleanupSocket(controlSocket);
 	this->isConnected = false;
 
 	output << "Disconnected from the server.\n";
@@ -438,6 +432,15 @@ bool FtpClient::SendCommand(const std::string& command)
 	return true;
 }
 
+void FtpClient::CleanupSocket(SOCKET socket)
+{
+	if (socket != INVALID_SOCKET)
+	{
+		closesocket(socket);
+		socket = INVALID_SOCKET;
+	}
+}
+
 void FtpClient::Start()
 {
 	std::string command;
@@ -453,10 +456,9 @@ void FtpClient::Start()
 		iss >> action;
 		action = Utils::toUpperCase(action);
 
-		// Extract the rest of the arguments as arg1 and arg2
-		if (iss >> std::quoted(arg1)) // Reads first argument if quoted or single word
+		if (iss >> std::quoted(arg1))
 		{
-			iss >> std::quoted(arg2); // Attempts to read the second argument
+			iss >> std::quoted(arg2);
 		}
 
 		if (action == CONNECT_COMMAND)
@@ -507,11 +509,11 @@ void FtpClient::Start()
 				DownloadFile(arg1, arg2);
 			}
 		}
-		else if (action == STOR_COMMAND)
+		else if (action == PUT_COMMAND)
 		{
 			if (arg1.empty() || arg2.empty())
 			{
-				output << "Usage: stor <localFileName> <remoteFileName>\n";
+				output << "Usage: put <localFileName> <remoteFileName>\n";
 			}
 			else
 			{
@@ -543,7 +545,7 @@ void FtpClient::Start()
 				<< "  pass <password>    - Send password\n"
 				<< "  list               - List files in directory\n"
 				<< "  get <remoteFileName> <localFileName> - Download a file\n"
-				<< "  stor <localFileName> <remoteFileName> - Upload a file\n"
+				<< "  put <localFileName> <remoteFileName> - Upload a file\n"
 				<< "  binary             - Switch file transfer mode to binary\n"
 				<< "  ascii              - Switch file transfer mode to ASCII\n"
 				<< "  disconnect         - Disconnects from the FTP server\n"
@@ -554,18 +556,4 @@ void FtpClient::Start()
 			output << "Unknown command. Type 'help' for available commands.\n";
 		}
 	}
-}
-
-std::vector<std::string> ParseCommand(const std::string& input)
-{
-	std::vector<std::string> tokens;
-	std::istringstream stream(input);
-	std::string token;
-
-	while (stream >> std::quoted(token))
-	{
-		tokens.push_back(token);
-	}
-
-	return tokens;
 }
